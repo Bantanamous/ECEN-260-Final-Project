@@ -19,8 +19,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "stm32l4xx_hal_adc.h"
 #include "usart.h"
 #include "gpio.h"
+#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -98,6 +100,36 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    
+    uint32_t total = 0;
+    int samples = 16; // Using 16 samples for a nice steady average
+
+    // 1. Take multiple readings to "smooth out" the noise
+    for(int i = 0; i < samples; i++) {
+        HAL_ADC_Start(&hadc1);
+        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+            total += HAL_ADC_GetValue(&hadc1);
+        }
+        HAL_ADC_Stop(&hadc1);
+    }
+
+    // 2. Calculate the average
+    uint32_t averaged_val = total / samples;
+
+    // 3. Convert to percentage using your 0-1250 range
+    float percentage = 100.0f * ((float)averaged_val - 0) / (1250.0f - 0);
+
+    // 4. Clamp the percentage
+    if(percentage > 100.0f) percentage = 100.0f;
+    if(percentage < 0.0f)   percentage = 0.0f;
+
+    // 5. Print the result
+    char msg[64];
+    int len = sprintf(msg, "Moisture: %.1f%% (Avg Raw: %lu)\r\n", percentage, averaged_val);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+    HAL_Delay(1000); // Wait 1 second before the next batch of readings
+    
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
