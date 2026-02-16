@@ -25,10 +25,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
-#include "stm32l4xx_hal_adc.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -54,6 +53,14 @@
 
 /* USER CODE BEGIN PV */
 
+// water sensor
+uint32_t water_raw = 0;
+float water_percent = 0;
+
+// DHT11 Sensor
+uint8_t dht_data[5];
+uint8_t temp_val = 0;
+uint8_t hum_val = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,7 +71,11 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void delay_us (uint16_t us)
+{
+    __HAL_TIM_SET_COUNTER(&htim2, 0);  // Reset the TIM2 counter to 0
+    while (__HAL_TIM_GET_COUNTER(&htim2) < us);  // Wait until it reaches the requested 'us'
+}
 /* USER CODE END 0 */
 
 /**
@@ -98,8 +109,11 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_ADC1_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-
+  // start TIM2
+  HAL_TIM_Base_Start(&htim2);
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -107,34 +121,69 @@ int main(void)
   while (1)
   {
     
-    uint32_t total = 0;
-    int samples = 16; // Using 16 samples for a nice steady average
+    // Start ADC
 
-    // 1. Take multiple readings to "smooth out" the noise
-    for(int i = 0; i < samples; i++) {
-        HAL_ADC_Start(&hadc1);
-        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
-            total += HAL_ADC_GetValue(&hadc1);
+    HAL_ADC_Start(&hadc1);
+    
+    // check for the sensor
+    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK)
+      {
+        // get the value of the sensor
+        water_raw = HAL_ADC_GetValue(&hadc1);
+
+        // convert the value to percentage
+        water_percent = ((float)water_raw / 4095.0F) * 100.0F;
+
+      }
+      HAL_ADC_Stop(&hadc1);
+
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET); // force pin to 0
+      HAL_Delay(18); // sensor needs a start signal of at least 18ms
+
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET); // let pin go high again
+      delay_us(30); // give sensor time to take over wire
+
+      GPIO_InitTypeDef GPIO_InitStruct = {0}; // temp struct for gpio config
+      GPIO_InitStruct.Pin = GPIO_PIN_4; // set pin 4 as pin to read
+      GPIO_InitStruct.Mode = GPIO_MODE_INPUT; // set pin to input mode
+      GPIO_InitStruct.Pull = GPIO_NOPULL; // set PUPDR for pin 4
+      HAL_GPIO_Init(GPIOA, &GPIO_InitStruct); 
+
+      delay_us(40); // some time to let sensor take control
+      if (!(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4))) // check if sensor is ready by low signal
+      {
+        while (!(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4))); // wait for sensor pulse
+        while ((HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4))); // 
+
+        for (int i = 0; i < 5; i++) // counts 5 bytes
+        {
+          for (int j = 0; j < 8; j++) // counts the 8 bits in each byte
+          {
+            while (!(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4))); // checking for the 50us low pulse that happens at each bit
+            delay_us(40); // wait for enough time to get the signal of a "1" or "0"
+
+              if (!(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4))) // if the pin is low, then it's a "0"
+              {
+                dht_data[i] &= ~(1 << (7-j)); // clear the bit at position (7-j) in dht_data[i]
+              }
+
+              else // if the pin is high, then it's a "1"
+              {
+                dht_data[i] |= (1 << (7-j)); // set the bit at position (7-j) in dht_data[i]
+                while ((HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4))); // wait for the high pulse to end
+              }
+          }
         }
-        HAL_ADC_Stop(&hadc1);
-    }
+        uint8_t checksum = dht_data[0] + dht_data[1] + dht_data[2] + dht_data[3]; // calculate checksum
 
-    // 2. Calculate the average
-    uint32_t averaged_val = total / samples;
+        if (checksum == dht_data[4]) // check if checksum is correct
+        {
+          temp_val = dht_data[2]; // get temperature value from data array
+          hum_val = dht_data[0]; // get humidity value from data array
+        }
+      }
 
-    // 3. Convert to percentage using your 0-1250 range
-    float percentage = 100.0f * ((float)averaged_val - 0) / (1250.0f - 0);
-
-    // 4. Clamp the percentage
-    if(percentage > 100.0f) percentage = 100.0f;
-    if(percentage < 0.0f)   percentage = 0.0f;
-
-    // 5. Print the result
-    char msg[64];
-    int len = sprintf(msg, "Moisture: %.1f%% (Avg Raw: %lu)\r\n", percentage, averaged_val);
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
-
-    HAL_Delay(1000); // Wait 1 second before the next batch of readings
+      HAL_Delay(2000); // wait 2 seconds before next reading
     
     /* USER CODE END WHILE */
 
