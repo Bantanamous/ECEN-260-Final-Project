@@ -14,6 +14,12 @@
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
+  
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  * * Portions Copyright (c) 2026 [Your Name]
+  * Licensed under the MIT License.
+  
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
